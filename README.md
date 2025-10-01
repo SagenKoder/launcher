@@ -12,7 +12,6 @@
 [![Build Status](https://github.com/SagenKoder/launcher/actions/workflows/release.yml/badge.svg)](https://github.com/SagenKoder/launcher/actions/workflows/release.yml)
 ![GitHub Contributors](https://img.shields.io/github/contributors/SagenKoder/launcher)
 ![GitHub All Releases](https://img.shields.io/github/downloads/SagenKoder/launcher/total)
-![Lines of Code](https://img.shields.io/tokei/lines/github/SagenKoder/launcher)
 
 
 Launcher is a lightweight command-palette style app launcher with first-class plugin support. Hit your hotkey, start typing, and run applications, open dashboards, or chat with an AI assistant without leaving your keyboard. Everything is written in Go and built on top of the Fyne toolkit, so the codebase stays small, cross-platform, and easy to extend.
