@@ -203,4 +203,4 @@ Ideas welcome! New plugins, better hotkey integration, testing, and docs are all
 
 ## License
 
-This project will ship with an OSI-approved license (MIT/Apache-2.0 in progress). For now, treat the code as all rights reserved until the license lands.
+This project is licensed under [GPL-3.0](LICENSE).
