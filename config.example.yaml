@@ -1,0 +1,28 @@
+# Example configuration for the launcher application.
+chat:
+  # Required: API key used for the AI chat plugin.
+  api_key: "replace-me"
+  # Optional: Override the API base URL.
+  base_url: "https://api.openai.com"
+  # Optional: Model name to request when using the chat plugin.
+  model: "gpt-5-chat"
+
+# Optional: Configure custom link shortcuts.
+# Each link will appear as a plugin in the launcher.
+links:
+  - name: "GitHub"
+    url: "https://github.com"
+    icon: "github"
+  - name: "Documentation"
+    url: "https://docs.example.com"
+    icon: "help-browser"
+  - name: "Observability Dashboard"
+    url: "https://grafana.example.com/dashboards"
+    icon: "utilities-monitor"
+  - name: "Log Search"
+    url: "https://kibana.example.com/app/discover#/?query=__QUERY__"
+    replacement: "__QUERY__"
+    icon: "system-search"
+  - name: "Company Dashboard"
+    url: "https://dashboard.example.com"
+    icon: "applications-internet"
