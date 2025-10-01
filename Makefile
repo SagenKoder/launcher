@@ -1,5 +1,5 @@
 APP := launcher
-VERSION ?= 0.1.2
+VERSION ?= 0.1.3
 ARCH ?= amd64
 GOOS ?= linux
 MAINTAINER ?= Launcher Developers <ops@example.com>
