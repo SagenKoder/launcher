@@ -1,5 +1,20 @@
 # Launcher
 
+![License](https://img.shields.io/github/license/SagenKoder/launcher)
+![Repo Size](https://img.shields.io/github/repo-size/SagenKoder/launcher)
+![Last Commit](https://img.shields.io/github/last-commit/SagenKoder/launcher)
+![GitHub Stars](https://img.shields.io/github/stars/SagenKoder/launcher?style=social)
+![GitHub Forks](https://img.shields.io/github/forks/SagenKoder/launcher?style=social)
+![GitHub Watchers](https://img.shields.io/github/watchers/SagenKoder/launcher?style=social)
+![GitHub Issues](https://img.shields.io/github/issues/SagenKoder/launcher)
+![GitHub Pull Requests](https://img.shields.io/github/issues-pr/SagenKoder/launcher)
+![Go Report Card](https://goreportcard.com/badge/github.com/SagenKoder/launcher)
+[![Build Status](https://github.com/SagenKoder/launcher/actions/workflows/release.yml/badge.svg)](https://github.com/SagenKoder/launcher/actions/workflows/release.yml)
+![GitHub Contributors](https://img.shields.io/github/contributors/SagenKoder/launcher)
+![GitHub All Releases](https://img.shields.io/github/downloads/SagenKoder/launcher/total)
+![Lines of Code](https://img.shields.io/tokei/lines/github/SagenKoder/launcher)
+
+
 Launcher is a lightweight command-palette style app launcher with first-class plugin support. Hit your hotkey, start typing, and run applications, open dashboards, or chat with an AI assistant without leaving your keyboard. Everything is written in Go and built on top of the Fyne toolkit, so the codebase stays small, cross-platform, and easy to extend.
 
 ## Why Launcher?
