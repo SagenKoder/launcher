@@ -3,7 +3,9 @@ package launcher
 import (
 	"fmt"
 	"log"
+	"os"
 	"os/exec"
+	"runtime"
 	"sort"
 	"strings"
 
@@ -202,6 +204,20 @@ func launchApplication(window fyne.Window, app applications.Application, showPlu
 	if execCmd == "" {
 		log.Printf("no executable defined for %s", app.Name)
 		return
+	}
+	if runtime.GOOS == "darwin" {
+		bundlePath := strings.TrimSpace(app.Path)
+		if strings.HasSuffix(strings.ToLower(bundlePath), ".app") {
+			if _, err := os.Stat(bundlePath); err == nil {
+				cmd := exec.Command("open", bundlePath)
+				if err := cmd.Start(); err != nil {
+					log.Printf("failed to launch %s: %v", app.Name, err)
+					return
+				}
+				window.Close()
+				return
+			}
+		}
 	}
 	cmd := exec.Command("sh", "-c", execCmd)
 	if err := cmd.Start(); err != nil {

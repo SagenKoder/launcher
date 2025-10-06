@@ -1,7 +1,7 @@
 APP := launcher
 VERSION ?= 0.1.3
 ARCH ?= amd64
-GOOS ?= linux
+GOOS ?= $(shell go env GOOS)
 MAINTAINER ?= Launcher Developers <ops@example.com>
 DESCRIPTION ?= Native Go-based launcher with plugin support.
 DIST := dist
@@ -24,6 +24,7 @@ build-release: | $(DIST)
 	GOCACHE=$(GOCACHE) GOOS=$(GOOS) GOARCH=$(ARCH) go build -trimpath -ldflags '-s -w -buildid=' -o $(BINARY) ./cmd/launcher
 
 package: build-release
+	@[ "$(GOOS)" = "linux" ] || { echo "package target currently only supports Linux (.deb)" >&2; exit 1; }
 	rm -rf $(DEB_STAGING)
 	mkdir -p $(DEB_CONTROL)
 	mkdir -p $(DEB_STAGING)/usr/bin

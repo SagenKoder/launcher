@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 
@@ -103,6 +104,12 @@ func candidatePaths() []string {
 	}
 	if home, err := os.UserHomeDir(); err == nil {
 		paths = append(paths, filepath.Join(home, ".config", "launcher", "config.yaml"))
+	}
+	if runtime.GOOS == "darwin" {
+		if home, err := os.UserHomeDir(); err == nil {
+			paths = append(paths, filepath.Join(home, "Library", "Application Support", "Launcher", "config.yaml"))
+		}
+		paths = append(paths, filepath.Join("/Library", "Application Support", "Launcher", "config.yaml"))
 	}
 	paths = append(paths, "/etc/launcher/config.yaml")
 	return paths

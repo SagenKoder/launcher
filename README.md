@@ -48,6 +48,19 @@ This will place the executable in `/usr/bin/launcher` and stage a default config
 
 > **Tip:** Add a custom system shortcut (for example `Alt+Space`) that launches `/usr/bin/launcher` to get a command palette workflow.
 
+### macOS
+
+Build the binary with Go (run the target twice with different `GOARCH` values for a universal set):
+
+```bash
+git clone https://github.com/SagenKoder/launcher.git
+cd launcher
+GOOS=darwin GOARCH=arm64 make build-release    # Apple Silicon
+GOOS=darwin GOARCH=amd64 make build-release    # Intel Macs
+```
+
+The compiled app lives at `dist/launcher`. Launch it directly (`./dist/launcher`) or wrap it with Automator/Shortcuts to attach a global hotkey. Configuration defaults to `~/Library/Application Support/Launcher/config.yaml`.
+
 ### Building from Source
 
 Prerequisites:
@@ -61,7 +74,7 @@ Clone the repo and build:
 git clone https://github.com/SagenKoder/launcher.git
 cd launcher
 make build            # go build ./cmd/launcher
-make package          # optional: produce dist/launcher_VERSION_amd64.deb
+make package          # optional (Linux): produce dist/launcher_VERSION_amd64.deb
 ```
 
 The resulting binary is in `dist/launcher`. Run it directly (`./dist/launcher`) or install the generated `.deb`.
@@ -74,7 +87,8 @@ Launcher looks for `config.yaml` in the following locations (first match wins):
 2. `./config.yaml` (current working directory)
 3. `${XDG_CONFIG_HOME}/launcher/config.yaml`
 4. `${HOME}/.config/launcher/config.yaml`
-5. `/etc/launcher/config.yaml`
+5. `${HOME}/Library/Application Support/Launcher/config.yaml` (macOS)
+6. `/etc/launcher/config.yaml`
 
 A starter file is provided as `config.example.yaml`. Copy it to one of the paths above and edit the relevant sections. Example:
 

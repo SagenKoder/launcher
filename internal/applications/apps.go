@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -24,6 +25,10 @@ type Application struct {
 // List returns the applications discovered on the current system by scanning
 // standard freedesktop application directories.
 func List() ([]Application, error) {
+	if runtime.GOOS == "darwin" {
+		return listDarwin()
+	}
+
 	dirs := desktopDirs()
 	seenPaths := make(map[string]struct{})
 	apps := make([]Application, 0, 128)
