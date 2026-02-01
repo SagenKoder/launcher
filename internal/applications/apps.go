@@ -82,6 +82,40 @@ func List() ([]Application, error) {
 
 var errSkipApplication = errors.New("skip application")
 
+type desktopEntry struct {
+	name      string
+	exec      string
+	iconName  string
+	appType   string
+	hidden    bool
+	noDisplay bool
+}
+
+func (d *desktopEntry) processKeyValue(key, value string) {
+	switch key {
+	case "Type":
+		d.appType = value
+	case "Name":
+		d.name = value
+	case "Exec":
+		d.exec = sanitiseExec(value)
+	case "Icon":
+		d.iconName = value
+	case "Hidden":
+		d.hidden = strings.EqualFold(value, "true")
+	case "NoDisplay":
+		d.noDisplay = strings.EqualFold(value, "true")
+	default:
+		if strings.HasPrefix(key, "Name[") && d.name == "" {
+			d.name = value
+		}
+	}
+}
+
+func (d *desktopEntry) isValid() bool {
+	return d.appType == "Application" && !d.hidden && !d.noDisplay && d.name != "" && d.exec != ""
+}
+
 func parseDesktopFile(path string) (Application, error) {
 	file, err := os.Open(path)
 	if err != nil {
@@ -89,18 +123,30 @@ func parseDesktopFile(path string) (Application, error) {
 	}
 	defer file.Close()
 
+	entry, err := scanDesktopFile(file)
+	if err != nil {
+		return Application{}, err
+	}
+
+	if !entry.isValid() {
+		return Application{}, errSkipApplication
+	}
+
+	return Application{
+		Name:     entry.name,
+		Exec:     entry.exec,
+		IconName: entry.iconName,
+		IconPath: resolveIcon(entry.iconName, path),
+		Path:     path,
+	}, nil
+}
+
+func scanDesktopFile(file *os.File) (desktopEntry, error) {
 	scanner := bufio.NewScanner(file)
 	scanner.Buffer(make([]byte, 0, 4096), 1024*1024)
 
-	var (
-		inDesktopEntry bool
-		name           string
-		exec           string
-		iconName       string
-		appType        string
-		hidden         bool
-		noDisplay      bool
-	)
+	var entry desktopEntry
+	inDesktopEntry := false
 
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
@@ -114,48 +160,20 @@ func parseDesktopFile(path string) (Application, error) {
 		if !inDesktopEntry {
 			continue
 		}
-		parts := strings.SplitN(line, "=", 2)
-		if len(parts) != 2 {
-			continue
-		}
-		key := strings.TrimSpace(parts[0])
-		value := strings.TrimSpace(parts[1])
-
-		switch {
-		case key == "Type":
-			appType = value
-		case key == "Name":
-			name = value
-		case strings.HasPrefix(key, "Name[") && name == "":
-			name = value
-		case key == "Exec":
-			exec = sanitiseExec(value)
-		case key == "Icon":
-			iconName = value
-		case key == "Hidden":
-			hidden = strings.EqualFold(value, "true")
-		case key == "NoDisplay":
-			noDisplay = strings.EqualFold(value, "true")
+		if key, value, ok := parseDesktopLine(line); ok {
+			entry.processKeyValue(key, value)
 		}
 	}
 
-	if err := scanner.Err(); err != nil {
-		return Application{}, err
+	return entry, scanner.Err()
+}
+
+func parseDesktopLine(line string) (key, value string, ok bool) {
+	parts := strings.SplitN(line, "=", 2)
+	if len(parts) != 2 {
+		return "", "", false
 	}
-
-	if appType != "Application" || hidden || noDisplay || name == "" || exec == "" {
-		return Application{}, errSkipApplication
-	}
-
-	iconPath := resolveIcon(iconName, path)
-
-	return Application{
-		Name:     name,
-		Exec:     exec,
-		IconName: iconName,
-		IconPath: iconPath,
-		Path:     path,
-	}, nil
+	return strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1]), true
 }
 
 func sanitiseExec(raw string) string {

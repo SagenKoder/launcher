@@ -25,24 +25,14 @@ import (
 	"github.com/SagenKoder/launcher/internal/search"
 )
 
-func Run(startHidden bool) {
-	application := app.New()
-	window := application.NewWindow("Launcher")
-
-	window.Resize(fyne.NewSize(600, 400))
-	window.CenterOnScreen()
-	window.SetFixedSize(false)
-
-	// Load cached apps immediately for instant startup
+func loadAndPrepareApps() ([]applications.Application, chan []applications.Application) {
 	apps, hasCached := applications.LoadCached()
 	if !hasCached {
 		apps = []applications.Application{}
 	}
 
-	// Channel for receiving refreshed apps
 	appsChan := make(chan []applications.Application, 1)
 
-	// Background refresh
 	go func() {
 		fresh, err := applications.List()
 		if err != nil {
@@ -55,9 +45,14 @@ func Run(startHidden bool) {
 	}()
 
 	preloadIcons(apps)
-
 	apps = append(apps, pluginApplications()...)
 	apps = append(apps, settingsApplication())
+	sortApps(apps)
+
+	return apps, appsChan
+}
+
+func sortApps(apps []applications.Application) {
 	sort.Slice(apps, func(i, j int) bool {
 		nameI := strings.ToLower(apps[i].Name)
 		nameJ := strings.ToLower(apps[j].Name)
@@ -66,6 +61,56 @@ func Run(startHidden bool) {
 		}
 		return nameI < nameJ
 	})
+}
+
+func setupHotkey(windowVisible *atomic.Bool, showWindow, hideWindow func()) (*hotkey.Hotkey, *atomic.Bool) {
+	hk := hotkey.New([]hotkey.Modifier{hotkey.ModOption}, hotkey.KeySpace)
+	var hotkeyRegistered atomic.Bool
+
+	go func() {
+		time.Sleep(500 * time.Millisecond)
+		if err := hk.Register(); err != nil {
+			log.Printf("failed to register hotkey (Option+Space): %v", err)
+			return
+		}
+		hotkeyRegistered.Store(true)
+		log.Printf("registered global hotkey: Option+Space")
+		for range hk.Keydown() {
+			if windowVisible.Load() {
+				hideWindow()
+			} else {
+				showWindow()
+			}
+		}
+	}()
+
+	return hk, &hotkeyRegistered
+}
+
+func setupIPC(application fyne.App, showWindow, hideWindow func()) *ipc.Server {
+	ipcServer := ipc.NewServer(
+		showWindow,
+		hideWindow,
+		func() {
+			ipc.Cleanup()
+			application.Quit()
+		},
+	)
+	if err := ipcServer.Start(); err != nil {
+		log.Printf("failed to start IPC server: %v", err)
+	}
+	return ipcServer
+}
+
+func Run(startHidden bool) {
+	application := app.New()
+	window := application.NewWindow("Launcher")
+
+	window.Resize(fyne.NewSize(600, 400))
+	window.CenterOnScreen()
+	window.SetFixedSize(false)
+
+	apps, appsChan := loadAndPrepareApps()
 
 	filtered := make([]applications.Application, 0)
 
@@ -299,40 +344,9 @@ func Run(startHidden bool) {
 		windowVisible.Store(true)
 	}
 
-	// Register global hotkey: Option+Space (deferred until after event loop starts)
-	hk := hotkey.New([]hotkey.Modifier{hotkey.ModOption}, hotkey.KeySpace)
-	var hotkeyRegistered atomic.Bool
-	go func() {
-		// Wait for the Fyne event loop to be ready
-		time.Sleep(500 * time.Millisecond)
-		if err := hk.Register(); err != nil {
-			log.Printf("failed to register hotkey (Option+Space): %v", err)
-			return
-		}
-		hotkeyRegistered.Store(true)
-		log.Printf("registered global hotkey: Option+Space")
-		for range hk.Keydown() {
-			// Toggle window visibility
-			if windowVisible.Load() {
-				hideWindow()
-			} else {
-				showWindow()
-			}
-		}
-	}()
-
-	// Start IPC server for daemon communication
-	ipcServer := ipc.NewServer(
-		showWindow,
-		hideWindow,
-		func() {
-			ipc.Cleanup()
-			application.Quit()
-		},
-	)
-	if err := ipcServer.Start(); err != nil {
-		log.Printf("failed to start IPC server: %v", err)
-	}
+	// Register global hotkey and IPC server
+	hk, hotkeyRegistered := setupHotkey(&windowVisible, showWindow, hideWindow)
+	ipcServer := setupIPC(application, showWindow, hideWindow)
 
 	// Ensure cleanup on exit
 	defer func() {
@@ -350,28 +364,16 @@ func Run(startHidden bool) {
 	go func() {
 		select {
 		case fresh := <-appsChan:
-			// Add plugins and settings
 			fresh = append(fresh, pluginApplications()...)
 			fresh = append(fresh, settingsApplication())
-			sort.Slice(fresh, func(i, j int) bool {
-				nameI := strings.ToLower(fresh[i].Name)
-				nameJ := strings.ToLower(fresh[j].Name)
-				if nameI == nameJ {
-					return fresh[i].Exec < fresh[j].Exec
-				}
-				return nameI < nameJ
-			})
-			// Update the shared apps slice
+			sortApps(fresh)
 			apps = fresh
-			// Refresh the list if entry is empty (showing all apps)
 			if entry.Text == "" {
 				fyne.Do(func() {
 					list.SetApplications(limitResults(apps))
 				})
 			}
-			// Preload icons for new apps
 			preloadIcons(fresh)
-			// Invalidate search cache since apps changed
 			search.InvalidateCache()
 		}
 	}()

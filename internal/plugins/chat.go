@@ -91,9 +91,29 @@ func chatStream(ctx context.Context, input string, emit func(string, bool)) erro
 		return err
 	}
 
-	history := snapshotHistory()
-	messages := append(history, openAIMessage{Role: "user", Content: input})
+	messages := append(snapshotHistory(), openAIMessage{Role: "user", Content: input})
+	resp, err := sendChatRequest(ctx, cfg, messages)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
 
+	if err := checkChatResponse(resp); err != nil {
+		return err
+	}
+
+	answer, err := processSSEStream(ctx, resp.Body, emit)
+	if err != nil {
+		return err
+	}
+
+	if answer != "" {
+		appendHistory(openAIMessage{Role: "user", Content: input}, openAIMessage{Role: "assistant", Content: answer})
+	}
+	return nil
+}
+
+func sendChatRequest(ctx context.Context, cfg chatConfig, messages []openAIMessage) (*http.Response, error) {
 	body, err := json.Marshal(struct {
 		Model    string          `json:"model"`
 		Messages []openAIMessage `json:"messages"`
@@ -104,89 +124,100 @@ func chatStream(ctx context.Context, input string, emit func(string, bool)) erro
 		Stream:   true,
 	})
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	endpoint := cfg.BaseURL + "/v1/chat/completions"
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, cfg.BaseURL+"/v1/chat/completions", bytes.NewReader(body))
 	if err != nil {
-		return err
+		return nil, err
 	}
 	req.Header.Set("Authorization", "Bearer "+cfg.APIKey)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "text/event-stream")
 
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
+	return http.DefaultClient.Do(req)
+}
 
-	if resp.StatusCode != http.StatusOK {
-		buf, _ := io.ReadAll(resp.Body)
-		if len(buf) == 0 {
-			return fmt.Errorf("chat API status %d", resp.StatusCode)
-		}
-		return fmt.Errorf("chat API status %d: %s", resp.StatusCode, strings.TrimSpace(string(buf)))
+func checkChatResponse(resp *http.Response) error {
+	if resp.StatusCode == http.StatusOK {
+		return nil
 	}
+	buf, _ := io.ReadAll(resp.Body)
+	if len(buf) == 0 {
+		return fmt.Errorf("chat API status %d", resp.StatusCode)
+	}
+	return fmt.Errorf("chat API status %d: %s", resp.StatusCode, strings.TrimSpace(string(buf)))
+}
 
-	scanner := bufio.NewScanner(resp.Body)
+func processSSEStream(ctx context.Context, body io.Reader, emit func(string, bool)) (string, error) {
+	scanner := bufio.NewScanner(body)
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
-	assistant := strings.Builder{}
+	var assistant strings.Builder
 
 	for scanner.Scan() {
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			return "", ctx.Err()
 		default:
 		}
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" {
-			continue
+
+		content, done, err := parseSSELine(scanner.Text())
+		if err != nil {
+			return "", err
 		}
-		if !strings.HasPrefix(line, "data:") {
-			continue
-		}
-		payload := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
-		if payload == "" {
-			continue
-		}
-		if payload == "[DONE]" {
+		if done {
 			break
 		}
-		var chunk struct {
-			Choices []struct {
-				Delta struct {
-					Content string `json:"content"`
-				} `json:"delta"`
-			} `json:"choices"`
+		if content == "" {
+			continue
 		}
-		if err := json.Unmarshal([]byte(payload), &chunk); err != nil {
-			return fmt.Errorf("parse stream chunk: %w", err)
+
+		assistant.WriteString(content)
+		for _, r := range content {
+			emit(string(r), false)
 		}
-		for _, choice := range chunk.Choices {
-			piece := choice.Delta.Content
-			if piece == "" {
-				continue
-			}
-			assistant.WriteString(piece)
-			for _, r := range piece {
-				emit(string(r), false)
-			}
-		}
-	}
-	if err := scanner.Err(); err != nil {
-		if errors.Is(err, context.Canceled) {
-			return err
-		}
-		return fmt.Errorf("read stream: %w", err)
 	}
 
-	answer := assistant.String()
-	if answer != "" {
-		appendHistory(openAIMessage{Role: "user", Content: input}, openAIMessage{Role: "assistant", Content: answer})
+	if err := scanner.Err(); err != nil {
+		if errors.Is(err, context.Canceled) {
+			return "", err
+		}
+		return "", fmt.Errorf("read stream: %w", err)
 	}
-	return nil
+
+	return assistant.String(), nil
+}
+
+func parseSSELine(rawLine string) (content string, done bool, err error) {
+	line := strings.TrimSpace(rawLine)
+	if line == "" || !strings.HasPrefix(line, "data:") {
+		return "", false, nil
+	}
+
+	payload := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+	if payload == "" {
+		return "", false, nil
+	}
+	if payload == "[DONE]" {
+		return "", true, nil
+	}
+
+	var chunk struct {
+		Choices []struct {
+			Delta struct {
+				Content string `json:"content"`
+			} `json:"delta"`
+		} `json:"choices"`
+	}
+	if err := json.Unmarshal([]byte(payload), &chunk); err != nil {
+		return "", false, fmt.Errorf("parse stream chunk: %w", err)
+	}
+
+	var builder strings.Builder
+	for _, choice := range chunk.Choices {
+		builder.WriteString(choice.Delta.Content)
+	}
+	return builder.String(), false, nil
 }
 
 func snapshotHistory() []openAIMessage {
