@@ -8,13 +8,17 @@ import (
 	"runtime"
 	"sort"
 	"strings"
+	"sync/atomic"
+	"time"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/app"
 	"fyne.io/fyne/v2/container"
 	fynedesktop "fyne.io/fyne/v2/driver/desktop"
+	"golang.design/x/hotkey"
 
 	"github.com/SagenKoder/launcher/internal/applications"
+	"github.com/SagenKoder/launcher/internal/ipc"
 	"github.com/SagenKoder/launcher/internal/plugins"
 	"github.com/SagenKoder/launcher/internal/search"
 )
@@ -32,6 +36,8 @@ func Run() {
 		log.Printf("failed to load applications: %v", err)
 	}
 
+	preloadIcons(apps)
+
 	apps = append(apps, pluginApplications()...)
 	sort.Slice(apps, func(i, j int) bool {
 		nameI := strings.ToLower(apps[i].Name)
@@ -43,7 +49,18 @@ func Run() {
 	})
 
 	filtered := make([]applications.Application, 0)
-	list := newLauncherList(window.Close)
+
+	// Track window visibility for toggle
+	var windowVisible atomic.Bool
+	windowVisible.Store(true) // Window starts visible
+
+	// hideWindow hides the window instead of closing (for daemon mode)
+	hideWindow := func() {
+		window.Hide()
+		windowVisible.Store(false)
+	}
+
+	list := newLauncherList(hideWindow)
 	pluginDisplay := newPluginDisplay(window)
 	badge := newPluginBadge()
 	body := container.NewMax(list)
@@ -58,6 +75,23 @@ func Run() {
 		if entry != nil {
 			entry.SetText("")
 		}
+	}
+
+	// resetToHome resets the launcher to its initial state
+	resetToHome := func() {
+		activePlugin = nil
+		body.Objects = []fyne.CanvasObject{list}
+		body.Refresh()
+		badge.Hide()
+		if entry != nil {
+			entry.SetPlaceHolder(defaultPlaceholder)
+			clearEntry()
+		}
+		if topBar != nil {
+			topBar.Refresh()
+		}
+		// Reset list to show all apps
+		list.SetApplications(apps)
 	}
 
 	registry := buildPluginRegistry()
@@ -95,15 +129,13 @@ func Run() {
 			if err != nil {
 				pluginDisplay.AppendMarkdown(fmt.Sprintf("**Error:** %s", err.Error()))
 			} else if infoCopy.CloseOnSubmit {
-				window.Close()
+				hideWindow()
 				return
 			}
 		}
 	}
 
-	entry = newLauncherEntry(func() {
-		window.Close()
-	})
+	entry = newLauncherEntry(hideWindow)
 	entry.SetPlaceHolder(defaultPlaceholder)
 	entry.SetOnMoveSelection(func(delta int) {
 		list.MoveSelection(delta)
@@ -115,7 +147,7 @@ func Run() {
 				pluginCopy := *activePlugin
 				processed := pluginDisplay.HandleInput(text, func(success bool, err error) {
 					if success && pluginCopy.CloseOnSubmit && err == nil {
-						window.Close()
+						hideWindow()
 					}
 				})
 				clearEntry()
@@ -127,12 +159,12 @@ func Run() {
 			return
 		}
 		if app, ok := list.SelectedApplication(); ok {
-			launchApplication(window, app, showPlugin)
+			launchApplication(window, app, showPlugin, hideWindow)
 		}
 	}
 	entry.SetOnActivate(runSelected)
 	list.SetOnActivate(func(app applications.Application) {
-		launchApplication(window, app, showPlugin)
+		launchApplication(window, app, showPlugin, hideWindow)
 	})
 
 	updateFilter := func(text string) {
@@ -158,14 +190,77 @@ func Run() {
 	content := container.NewBorder(topBar, nil, nil, nil, body)
 	window.SetContent(container.NewPadded(content))
 
+	// Hide window instead of close on Escape
 	window.Canvas().AddShortcut(&fynedesktop.CustomShortcut{KeyName: fyne.KeyEscape}, func(fyne.Shortcut) {
-		window.Close()
+		hideWindow()
 	})
 	window.Canvas().SetOnTypedKey(func(ev *fyne.KeyEvent) {
 		if ev.Name == fyne.KeyEscape {
-			window.Close()
+			hideWindow()
 		}
 	})
+
+	// Intercept window close to hide instead
+	window.SetCloseIntercept(func() {
+		hideWindow()
+	})
+
+	// showWindow shows the window and prepares it for input
+	showWindow := func() {
+		resetToHome()
+		window.Show()
+		window.CenterOnScreen()
+		window.RequestFocus()
+		window.Canvas().Focus(entry)
+		windowVisible.Store(true)
+	}
+
+	// Register global hotkey: Option+Space (deferred until after event loop starts)
+	hk := hotkey.New([]hotkey.Modifier{hotkey.ModOption}, hotkey.KeySpace)
+	var hotkeyRegistered atomic.Bool
+	go func() {
+		// Wait for the Fyne event loop to be ready
+		time.Sleep(500 * time.Millisecond)
+		if err := hk.Register(); err != nil {
+			log.Printf("failed to register hotkey (Option+Space): %v", err)
+			return
+		}
+		hotkeyRegistered.Store(true)
+		log.Printf("registered global hotkey: Option+Space")
+		for range hk.Keydown() {
+			// Toggle window visibility
+			if windowVisible.Load() {
+				hideWindow()
+			} else {
+				showWindow()
+			}
+		}
+	}()
+
+	// Start IPC server for daemon communication
+	ipcServer := ipc.NewServer(
+		showWindow,
+		hideWindow,
+		func() {
+			ipc.Cleanup()
+			application.Quit()
+		},
+	)
+	if err := ipcServer.Start(); err != nil {
+		log.Printf("failed to start IPC server: %v", err)
+	}
+
+	// Ensure cleanup on exit
+	defer func() {
+		if hotkeyRegistered.Load() {
+			hk.Unregister()
+		}
+		ipcServer.Close()
+		ipc.Cleanup()
+	}()
+
+	// Initialize list with all apps
+	list.SetApplications(apps)
 
 	window.Canvas().Focus(entry)
 	window.ShowAndRun()
@@ -193,7 +288,7 @@ func pluginApplications() []applications.Application {
 	return apps
 }
 
-func launchApplication(window fyne.Window, app applications.Application, showPlugin func(string)) {
+func launchApplication(window fyne.Window, app applications.Application, showPlugin func(string), hideWindow func()) {
 	execCmd := strings.TrimSpace(app.Exec)
 	if strings.HasPrefix(execCmd, "plugin:") {
 		if showPlugin != nil {
@@ -214,7 +309,7 @@ func launchApplication(window fyne.Window, app applications.Application, showPlu
 					log.Printf("failed to launch %s: %v", app.Name, err)
 					return
 				}
-				window.Close()
+				hideWindow()
 				return
 			}
 		}
@@ -224,5 +319,5 @@ func launchApplication(window fyne.Window, app applications.Application, showPlu
 		log.Printf("failed to launch %s: %v", app.Name, err)
 		return
 	}
-	window.Close()
+	hideWindow()
 }
