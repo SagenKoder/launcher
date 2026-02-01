@@ -25,7 +25,7 @@ import (
 	"github.com/SagenKoder/launcher/internal/search"
 )
 
-func Run() {
+func Run(startHidden bool) {
 	application := app.New()
 	window := application.NewWindow("Launcher")
 
@@ -55,7 +55,7 @@ func Run() {
 
 	// Track window visibility for toggle
 	var windowVisible atomic.Bool
-	windowVisible.Store(true) // Window starts visible
+	windowVisible.Store(!startHidden) // Window starts visible unless --hidden flag
 
 	// hideWindow hides the window instead of closing (for daemon mode)
 	hideWindow := func() {
@@ -309,6 +309,14 @@ func Run() {
 	list.SetApplications(apps)
 
 	window.Canvas().Focus(entry)
+
+	if startHidden {
+		// Start hidden - show briefly then hide (required for Fyne initialization)
+		go func() {
+			time.Sleep(100 * time.Millisecond)
+			hideWindow()
+		}()
+	}
 	window.ShowAndRun()
 }
 

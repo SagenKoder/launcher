@@ -124,6 +124,18 @@ func TryQuit() bool {
 	return sendCommand(CmdQuit)
 }
 
+// TryPing checks if a daemon is running by attempting to connect to the socket.
+// Returns true if a daemon is running, false otherwise.
+func TryPing() bool {
+	socketPath := GetSocketPath()
+	conn, err := net.Dial("unix", socketPath)
+	if err != nil {
+		return false
+	}
+	conn.Close()
+	return true
+}
+
 func sendCommand(cmd string) bool {
 	socketPath := GetSocketPath()
 

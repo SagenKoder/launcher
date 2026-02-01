@@ -12,7 +12,7 @@ DEB_STAGING := $(BUILD)/deb/$(APP)
 DEB_CONTROL := $(DEB_STAGING)/DEBIAN
 DEB_OUTPUT := $(DIST)/$(APP)_$(VERSION)_$(ARCH).deb
 
-.PHONY: build build-release clean package install-user install-macos bundle-macos
+.PHONY: build build-release clean package install-user install-macos bundle-macos install-launchagent uninstall-launchagent
 
 $(DIST):
 	mkdir -p $(DIST)
@@ -92,3 +92,33 @@ bundle-macos: build-release
 	@echo '</plist>' >> $(BUNDLE_CONTENTS)/Info.plist
 	@echo "Built $(BUNDLE)"
 	@echo "To install: cp -r $(BUNDLE) /Applications/"
+
+LAUNCHAGENT_PLIST := $(HOME)/Library/LaunchAgents/com.sagenkoder.launcher.plist
+LAUNCHAGENT_LABEL := com.sagenkoder.launcher
+
+install-launchagent: install-macos
+	@[ "$(GOOS)" = "darwin" ] || { echo "install-launchagent only supports macOS" >&2; exit 1; }
+	@mkdir -p "$(HOME)/Library/LaunchAgents"
+	@echo '<?xml version="1.0" encoding="UTF-8"?>' > $(LAUNCHAGENT_PLIST)
+	@echo '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">' >> $(LAUNCHAGENT_PLIST)
+	@echo '<plist version="1.0">' >> $(LAUNCHAGENT_PLIST)
+	@echo '<dict>' >> $(LAUNCHAGENT_PLIST)
+	@echo '  <key>Label</key><string>$(LAUNCHAGENT_LABEL)</string>' >> $(LAUNCHAGENT_PLIST)
+	@echo '  <key>ProgramArguments</key>' >> $(LAUNCHAGENT_PLIST)
+	@echo '  <array>' >> $(LAUNCHAGENT_PLIST)
+	@echo '    <string>$(HOME)/bin/$(APP)</string>' >> $(LAUNCHAGENT_PLIST)
+	@echo '    <string>--hidden</string>' >> $(LAUNCHAGENT_PLIST)
+	@echo '  </array>' >> $(LAUNCHAGENT_PLIST)
+	@echo '  <key>RunAtLoad</key><true/>' >> $(LAUNCHAGENT_PLIST)
+	@echo '  <key>KeepAlive</key><false/>' >> $(LAUNCHAGENT_PLIST)
+	@echo '</dict>' >> $(LAUNCHAGENT_PLIST)
+	@echo '</plist>' >> $(LAUNCHAGENT_PLIST)
+	launchctl load $(LAUNCHAGENT_PLIST) 2>/dev/null || true
+	@echo "Installed launch agent: $(LAUNCHAGENT_PLIST)"
+	@echo "Launcher will auto-start (hidden) on login"
+
+uninstall-launchagent:
+	@[ "$(GOOS)" = "darwin" ] || { echo "uninstall-launchagent only supports macOS" >&2; exit 1; }
+	launchctl unload $(LAUNCHAGENT_PLIST) 2>/dev/null || true
+	rm -f $(LAUNCHAGENT_PLIST)
+	@echo "Removed launch agent"
