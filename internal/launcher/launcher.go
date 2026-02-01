@@ -223,7 +223,7 @@ func Run(startHidden bool) {
 	var debounceTimer *time.Timer
 	var debounceMu sync.Mutex
 	const debounceDelay = 16 * time.Millisecond // ~1 frame at 60fps
-	const maxDisplayResults = 50               // Limit displayed results for performance
+	const maxDisplayResults = 50                // Limit displayed results for performance
 
 	limitResults := func(results []applications.Application) []applications.Application {
 		if len(results) > maxDisplayResults {
