@@ -50,7 +50,11 @@ func iconWorker() {
 	for req := range iconQueue {
 		res := loadIconSync(req.path)
 		if res != nil && req.widget != nil {
-			req.widget.SetIcon(res)
+			widget := req.widget
+			icon := res
+			fyne.Do(func() {
+				widget.SetIcon(icon)
+			})
 		}
 	}
 }

@@ -252,12 +252,15 @@ func Run(startHidden bool) {
 		if debounceTimer != nil {
 			debounceTimer.Stop()
 		}
+		searchText := text
 		debounceTimer = time.AfterFunc(debounceDelay, func() {
-			filtered = search.Filter(apps, text)
-			list.SetApplications(limitResults(filtered))
-			if len(filtered) > 0 {
-				list.ScrollToTop()
-			}
+			fyne.Do(func() {
+				filtered = search.Filter(apps, searchText)
+				list.SetApplications(limitResults(filtered))
+				if len(filtered) > 0 {
+					list.ScrollToTop()
+				}
+			})
 		})
 		debounceMu.Unlock()
 	}
