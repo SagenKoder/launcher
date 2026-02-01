@@ -17,7 +17,6 @@ import (
 	"fyne.io/fyne/v2/container"
 	fynedesktop "fyne.io/fyne/v2/driver/desktop"
 	"fyne.io/fyne/v2/theme"
-	"golang.design/x/hotkey"
 
 	"github.com/SagenKoder/launcher/internal/applications"
 	"github.com/SagenKoder/launcher/internal/ipc"
@@ -61,30 +60,6 @@ func sortApps(apps []applications.Application) {
 		}
 		return nameI < nameJ
 	})
-}
-
-func setupHotkey(windowVisible *atomic.Bool, showWindow, hideWindow func()) (*hotkey.Hotkey, *atomic.Bool) {
-	hk := hotkey.New([]hotkey.Modifier{hotkey.ModOption}, hotkey.KeySpace)
-	var hotkeyRegistered atomic.Bool
-
-	go func() {
-		time.Sleep(500 * time.Millisecond)
-		if err := hk.Register(); err != nil {
-			log.Printf("failed to register hotkey (Option+Space): %v", err)
-			return
-		}
-		hotkeyRegistered.Store(true)
-		log.Printf("registered global hotkey: Option+Space")
-		for range hk.Keydown() {
-			if windowVisible.Load() {
-				hideWindow()
-			} else {
-				showWindow()
-			}
-		}
-	}()
-
-	return hk, &hotkeyRegistered
 }
 
 func setupIPC(application fyne.App, showWindow, hideWindow func()) *ipc.Server {
@@ -350,9 +325,7 @@ func Run(startHidden bool) {
 
 	// Ensure cleanup on exit
 	defer func() {
-		if hotkeyRegistered.Load() {
-			hk.Unregister()
-		}
+		cleanupHotkey(hk, hotkeyRegistered)
 		ipcServer.Close()
 		ipc.Cleanup()
 	}()
