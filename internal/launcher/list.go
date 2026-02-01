@@ -14,6 +14,7 @@ type launcherList struct {
 	box        *fyne.Container
 	scroll     *container.Scroll
 	items      []*ui.AppListItem
+	pool       []*ui.AppListItem // Pre-allocated widget pool for reuse
 	apps       []applications.Application
 	selected   int
 	onEscape   func()
@@ -36,19 +37,51 @@ func (l *launcherList) SetApplications(apps []applications.Application) {
 	if l.box == nil {
 		return
 	}
-	l.box.Objects = l.box.Objects[:0]
-	l.items = l.items[:0]
-	l.apps = append(l.apps[:0], apps...)
-	for idx, app := range apps {
-		item := ui.NewAppListItem()
-		item.Set(iconResource(app.IconPath), app.Name)
-		item.SetOnTapped(l.makeSelectHandler(idx))
-		l.box.Objects = append(l.box.Objects, item)
-		l.items = append(l.items, item)
+
+	needed := len(apps)
+	current := len(l.items)
+
+	// Return excess items to pool
+	if current > needed {
+		l.pool = append(l.pool, l.items[needed:]...)
+		l.items = l.items[:needed]
 	}
-	if len(apps) > 0 {
+
+	// Update apps slice
+	l.apps = append(l.apps[:0], apps...)
+
+	// Reuse existing items and update their content
+	for idx := 0; idx < needed; idx++ {
+		var item *ui.AppListItem
+
+		if idx < current {
+			// Reuse existing widget
+			item = l.items[idx]
+		} else if len(l.pool) > 0 {
+			// Pull from pool
+			item = l.pool[len(l.pool)-1]
+			l.pool = l.pool[:len(l.pool)-1]
+			l.items = append(l.items, item)
+		} else {
+			// Create new widget only when necessary
+			item = ui.NewAppListItem()
+			l.items = append(l.items, item)
+		}
+
+		app := apps[idx]
+		item.Set(iconResourceAsync(app.IconPath, item), app.Name)
+		item.SetOnTapped(l.makeSelectHandler(idx))
+		item.SetSelected(idx == 0 && needed > 0)
+	}
+
+	// Rebuild box objects slice (no allocations, just pointer assignments)
+	l.box.Objects = l.box.Objects[:0]
+	for _, item := range l.items {
+		l.box.Objects = append(l.box.Objects, item)
+	}
+
+	if needed > 0 {
 		l.selected = 0
-		l.updateSelection()
 	} else {
 		l.selected = -1
 	}
@@ -80,11 +113,22 @@ func (l *launcherList) moveSelection(delta int) {
 	if next == l.selected {
 		return
 	}
-	l.selected = next
-	l.updateSelection()
+	l.setSelection(next)
+}
+
+func (l *launcherList) setSelection(newIndex int) {
+	// Only update the changed items for O(1) instead of O(n)
+	if l.selected >= 0 && l.selected < len(l.items) {
+		l.items[l.selected].SetSelected(false)
+	}
+	l.selected = newIndex
+	if l.selected >= 0 && l.selected < len(l.items) {
+		l.items[l.selected].SetSelected(true)
+	}
 }
 
 func (l *launcherList) updateSelection() {
+	// Full refresh - only used when list contents change
 	for idx, item := range l.items {
 		item.SetSelected(idx == l.selected)
 	}
@@ -96,8 +140,7 @@ func (l *launcherList) MoveSelection(delta int) {
 
 func (l *launcherList) makeSelectHandler(idx int) func() {
 	return func() {
-		l.selected = idx
-		l.updateSelection()
+		l.setSelection(idx)
 	}
 }
 

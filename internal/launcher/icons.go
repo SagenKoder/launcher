@@ -15,14 +15,45 @@ import (
 	"fyne.io/fyne/v2/theme"
 
 	"github.com/SagenKoder/launcher/internal/applications"
+	"github.com/SagenKoder/launcher/internal/ui"
 )
 
 var (
 	iconCache    = make(map[string]fyne.Resource)
-	iconCacheMu  sync.Mutex
+	iconCacheMu  sync.RWMutex
 	iconCacheDir string
 	iconDirOnce  sync.Once
 )
+
+type iconRequest struct {
+	path   string
+	widget *ui.AppListItem
+}
+
+var (
+	iconQueue     chan iconRequest
+	iconQueueOnce sync.Once
+)
+
+const numIconWorkers = 4
+
+func initIconWorkers() {
+	iconQueueOnce.Do(func() {
+		iconQueue = make(chan iconRequest, 100)
+		for i := 0; i < numIconWorkers; i++ {
+			go iconWorker()
+		}
+	})
+}
+
+func iconWorker() {
+	for req := range iconQueue {
+		res := loadIconSync(req.path)
+		if res != nil && req.widget != nil {
+			req.widget.SetIcon(res)
+		}
+	}
+}
 
 func getIconCacheDir() string {
 	iconDirOnce.Do(func() {
@@ -62,7 +93,18 @@ func preloadIcons(apps []applications.Application) {
 	}()
 }
 
+// iconResource returns the icon for the given path.
+// For cached icons, returns immediately. For uncached icons, returns placeholder
+// and loads asynchronously, updating the widget when ready.
 func iconResource(path string) fyne.Resource {
+	return iconResourceAsync(path, nil)
+}
+
+// iconResourceAsync returns the icon for the given path, optionally updating
+// the widget asynchronously if the icon needs to be loaded.
+func iconResourceAsync(path string, widget *ui.AppListItem) fyne.Resource {
+	initIconWorkers()
+
 	if path == "" {
 		return theme.FileApplicationIcon()
 	}
@@ -71,9 +113,43 @@ func iconResource(path string) fyne.Resource {
 		return themeIcon(strings.TrimPrefix(path, "theme:"))
 	}
 
+	// Check cache first (read lock for performance)
+	iconCacheMu.RLock()
+	if res, ok := iconCache[path]; ok {
+		iconCacheMu.RUnlock()
+		if res == nil {
+			return theme.FileApplicationIcon()
+		}
+		return res
+	}
+	iconCacheMu.RUnlock()
+
+	// For ICNS files on macOS, check if PNG already exists in disk cache
+	if runtime.GOOS == "darwin" && strings.EqualFold(filepath.Ext(path), ".icns") {
+		if pngPath := convertIcnsToPngCached(path); pngPath != "" {
+			// PNG exists, load it synchronously (fast)
+			return loadIconSync(path)
+		}
+		// No PNG cache, queue for async conversion
+		if widget != nil {
+			select {
+			case iconQueue <- iconRequest{path: path, widget: widget}:
+			default:
+				// Queue full, fall through to sync load
+			}
+			return theme.FileApplicationIcon()
+		}
+	}
+
+	// For non-ICNS or when no widget provided, load synchronously
+	return loadIconSync(path)
+}
+
+func loadIconSync(path string) fyne.Resource {
 	iconCacheMu.Lock()
 	defer iconCacheMu.Unlock()
 
+	// Double-check cache after acquiring write lock
 	if res, ok := iconCache[path]; ok {
 		if res == nil {
 			return theme.FileApplicationIcon()
@@ -83,9 +159,10 @@ func iconResource(path string) fyne.Resource {
 
 	loadPath := path
 	if runtime.GOOS == "darwin" && strings.EqualFold(filepath.Ext(path), ".icns") {
-		if converted := convertIcnsToPngCached(path); converted != "" {
+		if converted := convertIcnsToPng(path); converted != "" {
 			loadPath = converted
 		} else {
+			iconCache[path] = nil
 			return theme.FileApplicationIcon()
 		}
 	}

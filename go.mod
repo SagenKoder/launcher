@@ -6,7 +6,9 @@ toolchain go1.24.6
 
 require (
 	fyne.io/fyne/v2 v2.6.3
+	golang.design/x/hotkey v0.4.1
 	gopkg.in/yaml.v3 v3.0.1
+	howett.net/plist v1.0.1
 )
 
 require (
@@ -37,7 +39,6 @@ require (
 	github.com/srwiley/rasterx v0.0.0-20220730225603-2ab79fcdd4ef // indirect
 	github.com/stretchr/testify v1.10.0 // indirect
 	github.com/yuin/goldmark v1.7.8 // indirect
-	golang.design/x/hotkey v0.4.1 // indirect
 	golang.org/x/image v0.24.0 // indirect
 	golang.org/x/net v0.38.0 // indirect
 	golang.org/x/sys v0.31.0 // indirect

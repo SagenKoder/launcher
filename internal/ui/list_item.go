@@ -12,11 +12,13 @@ import (
 
 type AppListItem struct {
 	widget.BaseWidget
-	icon     *widget.Icon
-	label    *widget.Label
-	bg       *canvas.Rectangle
-	selected bool
-	onTapped func()
+	icon        *widget.Icon
+	label       *widget.Label
+	bg          *canvas.Rectangle
+	selected    bool
+	onTapped    func()
+	currentText string
+	currentIcon fyne.Resource
 }
 
 func NewAppListItem() *AppListItem {
@@ -38,13 +40,38 @@ func (i *AppListItem) CreateRenderer() fyne.WidgetRenderer {
 }
 
 func (i *AppListItem) Set(icon fyne.Resource, text string) {
+	textChanged := text != i.currentText
+	iconChanged := icon != i.currentIcon
+
+	if !textChanged && !iconChanged {
+		return
+	}
+
+	if iconChanged {
+		i.currentIcon = icon
+		if icon != nil {
+			i.icon.SetResource(icon)
+		} else {
+			i.icon.SetResource(theme.FileApplicationIcon())
+		}
+	}
+
+	if textChanged {
+		i.currentText = text
+		i.label.SetText(text)
+	}
+}
+
+func (i *AppListItem) SetIcon(icon fyne.Resource) {
+	if icon == i.currentIcon {
+		return
+	}
+	i.currentIcon = icon
 	if icon != nil {
 		i.icon.SetResource(icon)
 	} else {
 		i.icon.SetResource(theme.FileApplicationIcon())
 	}
-	i.label.SetText(text)
-	i.Refresh()
 }
 
 func (i *AppListItem) SetSelected(selected bool) {

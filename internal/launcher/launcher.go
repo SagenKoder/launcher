@@ -33,10 +33,26 @@ func Run(startHidden bool) {
 	window.CenterOnScreen()
 	window.SetFixedSize(false)
 
-	apps, err := applications.List()
-	if err != nil {
-		log.Printf("failed to load applications: %v", err)
+	// Load cached apps immediately for instant startup
+	apps, hasCached := applications.LoadCached()
+	if !hasCached {
+		apps = []applications.Application{}
 	}
+
+	// Channel for receiving refreshed apps
+	appsChan := make(chan []applications.Application, 1)
+
+	// Background refresh
+	go func() {
+		fresh, err := applications.List()
+		if err != nil {
+			log.Printf("failed to load applications: %v", err)
+		}
+		if len(fresh) > 0 {
+			applications.SaveCache(fresh)
+			appsChan <- fresh
+		}
+	}()
 
 	preloadIcons(apps)
 
@@ -96,8 +112,12 @@ func Run(startHidden bool) {
 		if topBar != nil {
 			topBar.Refresh()
 		}
-		// Reset list to show all apps
-		list.SetApplications(apps)
+		// Reset list to show limited apps for performance
+		displayApps := apps
+		if len(displayApps) > 50 {
+			displayApps = displayApps[:50]
+		}
+		list.SetApplications(displayApps)
 	}
 
 	registry := buildPluginRegistry()
@@ -202,7 +222,15 @@ func Run(startHidden bool) {
 	// Debounced search to prevent UI lag while typing
 	var debounceTimer *time.Timer
 	var debounceMu sync.Mutex
-	const debounceDelay = 50 * time.Millisecond
+	const debounceDelay = 16 * time.Millisecond // ~1 frame at 60fps
+	const maxDisplayResults = 50               // Limit displayed results for performance
+
+	limitResults := func(results []applications.Application) []applications.Application {
+		if len(results) > maxDisplayResults {
+			return results[:maxDisplayResults]
+		}
+		return results
+	}
 
 	updateFilter := func(text string) {
 		if activePlugin != nil {
@@ -212,14 +240,21 @@ func Run(startHidden bool) {
 			return
 		}
 
-		// Debounce: reset timer on each keystroke
+		// Show all apps when query cleared
+		if text == "" {
+			list.SetApplications(limitResults(apps))
+			list.ScrollToTop()
+			return
+		}
+
+		// Debounce all keystrokes uniformly
 		debounceMu.Lock()
 		if debounceTimer != nil {
 			debounceTimer.Stop()
 		}
 		debounceTimer = time.AfterFunc(debounceDelay, func() {
 			filtered = search.Filter(apps, text)
-			list.SetApplications(filtered)
+			list.SetApplications(limitResults(filtered))
 			if len(filtered) > 0 {
 				list.ScrollToTop()
 			}
@@ -305,8 +340,38 @@ func Run(startHidden bool) {
 		ipc.Cleanup()
 	}()
 
-	// Initialize list with all apps
-	list.SetApplications(apps)
+	// Initialize list with limited apps for performance
+	list.SetApplications(limitResults(apps))
+
+	// Listen for background app refresh
+	go func() {
+		select {
+		case fresh := <-appsChan:
+			// Add plugins and settings
+			fresh = append(fresh, pluginApplications()...)
+			fresh = append(fresh, settingsApplication())
+			sort.Slice(fresh, func(i, j int) bool {
+				nameI := strings.ToLower(fresh[i].Name)
+				nameJ := strings.ToLower(fresh[j].Name)
+				if nameI == nameJ {
+					return fresh[i].Exec < fresh[j].Exec
+				}
+				return nameI < nameJ
+			})
+			// Update the shared apps slice
+			apps = fresh
+			// Refresh the list if entry is empty (showing all apps)
+			if entry.Text == "" {
+				fyne.Do(func() {
+					list.SetApplications(limitResults(apps))
+				})
+			}
+			// Preload icons for new apps
+			preloadIcons(fresh)
+			// Invalidate search cache since apps changed
+			search.InvalidateCache()
+		}
+	}()
 
 	window.Canvas().Focus(entry)
 
@@ -314,8 +379,10 @@ func Run(startHidden bool) {
 		// Start hidden - show briefly then hide (required for Fyne initialization)
 		go func() {
 			time.Sleep(100 * time.Millisecond)
-			hideWindow()
+			fyne.Do(hideWindow)
 		}()
+		// Pre-warm caches when starting hidden (daemon mode)
+		go prewarmCaches(apps)
 	}
 	window.ShowAndRun()
 }
@@ -348,6 +415,18 @@ func settingsApplication() applications.Application {
 		Exec:     "settings:",
 		Path:     "settings:",
 		IconPath: "theme:settings",
+	}
+}
+
+// prewarmCaches pre-warms search and icon caches for faster first interaction
+func prewarmCaches(apps []applications.Application) {
+	// Pre-warm common search prefixes (single letters)
+	for c := 'a'; c <= 'z'; c++ {
+		search.Filter(apps, string(c))
+	}
+	// Pre-warm number prefixes
+	for c := '0'; c <= '9'; c++ {
+		search.Filter(apps, string(c))
 	}
 }
 

@@ -3,15 +3,15 @@
 package applications
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"howett.net/plist"
 )
 
 type macInfoPlist struct {
@@ -163,19 +163,16 @@ func firstNonEmpty(values ...string) string {
 
 func readInfoPlist(bundlePath string) (macInfoPlist, error) {
 	infoPath := filepath.Join(bundlePath, "Contents", "Info.plist")
-	if !fileExists(infoPath) {
-		return macInfoPlist{}, fmt.Errorf("info.plist not found: %s", infoPath)
-	}
-
-	cmd := exec.Command("plutil", "-convert", "json", "-o", "-", infoPath)
-	data, err := cmd.Output()
+	file, err := os.Open(infoPath)
 	if err != nil {
-		return macInfoPlist{}, fmt.Errorf("plutil convert %s: %w", infoPath, err)
+		return macInfoPlist{}, fmt.Errorf("open info.plist %s: %w", infoPath, err)
 	}
+	defer file.Close()
 
 	var raw map[string]any
-	if err := json.Unmarshal(data, &raw); err != nil {
-		return macInfoPlist{}, fmt.Errorf("parse json %s: %w", infoPath, err)
+	decoder := plist.NewDecoder(file)
+	if err := decoder.Decode(&raw); err != nil {
+		return macInfoPlist{}, fmt.Errorf("parse plist %s: %w", infoPath, err)
 	}
 
 	info := macInfoPlist{

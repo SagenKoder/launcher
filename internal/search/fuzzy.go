@@ -3,8 +3,17 @@ package search
 import (
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/SagenKoder/launcher/internal/applications"
+)
+
+const maxCacheSize = 100
+
+var (
+	searchCache   = make(map[string][]applications.Application)
+	cacheKeys     = make([]string, 0, maxCacheSize)
+	searchCacheMu sync.RWMutex
 )
 
 // Filter returns the subset of applications that match the query using a simple
@@ -16,6 +25,16 @@ func Filter(apps []applications.Application, query string) []applications.Applic
 	}
 
 	q := strings.ToLower(trimmed)
+
+	// Check cache first
+	searchCacheMu.RLock()
+	if cached, ok := searchCache[q]; ok {
+		searchCacheMu.RUnlock()
+		return cached
+	}
+	searchCacheMu.RUnlock()
+
+	// Compute results
 	results := scoreApplications(apps, q)
 	if len(results) == 0 {
 		return nil
@@ -25,7 +44,28 @@ func Filter(apps []applications.Application, query string) []applications.Applic
 	for i, res := range results {
 		filtered[i] = res.app
 	}
+
+	// Cache results with LRU eviction
+	searchCacheMu.Lock()
+	if len(cacheKeys) >= maxCacheSize {
+		// Evict oldest entry
+		oldest := cacheKeys[0]
+		cacheKeys = cacheKeys[1:]
+		delete(searchCache, oldest)
+	}
+	searchCache[q] = filtered
+	cacheKeys = append(cacheKeys, q)
+	searchCacheMu.Unlock()
+
 	return filtered
+}
+
+// InvalidateCache clears the search cache. Call when apps list changes.
+func InvalidateCache() {
+	searchCacheMu.Lock()
+	searchCache = make(map[string][]applications.Application)
+	cacheKeys = cacheKeys[:0]
+	searchCacheMu.Unlock()
 }
 
 type scoredApp struct {
