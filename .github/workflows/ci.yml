@@ -45,3 +45,28 @@ jobs:
           path: |
             dist/launcher
             dist/*.deb
+
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Run tests
+        run: go test ./...
+
+      - name: Build .app bundle
+        run: make bundle-macos
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: launcher-macos-artifacts
+          path: |
+            dist/launcher
+            dist/Launcher.app

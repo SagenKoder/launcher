@@ -8,6 +8,7 @@ import (
 	"runtime"
 	"sort"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -15,6 +16,7 @@ import (
 	"fyne.io/fyne/v2/app"
 	"fyne.io/fyne/v2/container"
 	fynedesktop "fyne.io/fyne/v2/driver/desktop"
+	"fyne.io/fyne/v2/theme"
 	"golang.design/x/hotkey"
 
 	"github.com/SagenKoder/launcher/internal/applications"
@@ -39,6 +41,7 @@ func Run() {
 	preloadIcons(apps)
 
 	apps = append(apps, pluginApplications()...)
+	apps = append(apps, settingsApplication())
 	sort.Slice(apps, func(i, j int) bool {
 		nameI := strings.ToLower(apps[i].Name)
 		nameJ := strings.ToLower(apps[j].Name)
@@ -65,6 +68,8 @@ func Run() {
 	badge := newPluginBadge()
 	body := container.NewMax(list)
 	var activePlugin *plugins.Info
+	var settingsActive bool
+	var settings *settingsPanel
 
 	defaultPlaceholder := "Type to search applications"
 
@@ -80,6 +85,7 @@ func Run() {
 	// resetToHome resets the launcher to its initial state
 	resetToHome := func() {
 		activePlugin = nil
+		settingsActive = false
 		body.Objects = []fyne.CanvasObject{list}
 		body.Refresh()
 		badge.Hide()
@@ -135,12 +141,38 @@ func Run() {
 		}
 	}
 
+	showSettings := func() {
+		if settings == nil {
+			settings = newSettingsPanel(func() {
+				// Callback after save - settings saved
+			})
+		}
+		settings.Refresh()
+		settingsActive = true
+		activePlugin = nil
+		body.Objects = []fyne.CanvasObject{settings.Container()}
+		body.Refresh()
+		badge.Show()
+		badge.Set(theme.SettingsIcon(), "Settings")
+		if entry != nil {
+			entry.SetPlaceHolder("Settings")
+			clearEntry()
+		}
+		if topBar != nil {
+			topBar.Refresh()
+		}
+	}
+
 	entry = newLauncherEntry(hideWindow)
 	entry.SetPlaceHolder(defaultPlaceholder)
 	entry.SetOnMoveSelection(func(delta int) {
 		list.MoveSelection(delta)
 	})
 	runSelected := func() {
+		if settingsActive {
+			// Settings is active, don't process input
+			return
+		}
 		if activePlugin != nil {
 			text := entry.Text
 			if strings.TrimSpace(text) != "" {
@@ -159,13 +191,18 @@ func Run() {
 			return
 		}
 		if app, ok := list.SelectedApplication(); ok {
-			launchApplication(window, app, showPlugin, hideWindow)
+			launchApplication(window, app, showPlugin, showSettings, hideWindow)
 		}
 	}
 	entry.SetOnActivate(runSelected)
 	list.SetOnActivate(func(app applications.Application) {
-		launchApplication(window, app, showPlugin, hideWindow)
+		launchApplication(window, app, showPlugin, showSettings, hideWindow)
 	})
+
+	// Debounced search to prevent UI lag while typing
+	var debounceTimer *time.Timer
+	var debounceMu sync.Mutex
+	const debounceDelay = 50 * time.Millisecond
 
 	updateFilter := func(text string) {
 		if activePlugin != nil {
@@ -174,11 +211,20 @@ func Run() {
 			}
 			return
 		}
-		filtered = search.Filter(apps, text)
-		list.SetApplications(filtered)
-		if len(filtered) > 0 {
-			list.ScrollToTop()
+
+		// Debounce: reset timer on each keystroke
+		debounceMu.Lock()
+		if debounceTimer != nil {
+			debounceTimer.Stop()
 		}
+		debounceTimer = time.AfterFunc(debounceDelay, func() {
+			filtered = search.Filter(apps, text)
+			list.SetApplications(filtered)
+			if len(filtered) > 0 {
+				list.ScrollToTop()
+			}
+		})
+		debounceMu.Unlock()
 	}
 	entry.OnChanged = updateFilter
 	entry.OnSubmitted = func(string) {
@@ -288,8 +334,23 @@ func pluginApplications() []applications.Application {
 	return apps
 }
 
-func launchApplication(window fyne.Window, app applications.Application, showPlugin func(string), hideWindow func()) {
+func settingsApplication() applications.Application {
+	return applications.Application{
+		Name:     "Settings",
+		Exec:     "settings:",
+		Path:     "settings:",
+		IconPath: "theme:settings",
+	}
+}
+
+func launchApplication(window fyne.Window, app applications.Application, showPlugin func(string), showSettings func(), hideWindow func()) {
 	execCmd := strings.TrimSpace(app.Exec)
+	if strings.HasPrefix(execCmd, "settings:") {
+		if showSettings != nil {
+			showSettings()
+		}
+		return
+	}
 	if strings.HasPrefix(execCmd, "plugin:") {
 		if showPlugin != nil {
 			showPlugin(strings.TrimPrefix(execCmd, "plugin:"))

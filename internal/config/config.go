@@ -40,6 +40,7 @@ var (
 	loaded   Config
 	loadErr  error
 	pathUsed string
+	configMu sync.RWMutex
 )
 
 // Load reads configuration from the first existing config file among a set of
@@ -71,6 +72,68 @@ func Load() (Config, error) {
 // an empty string if Load hasn't succeeded yet.
 func Path() string {
 	return pathUsed
+}
+
+// DefaultPath returns the default configuration file path for saving.
+// On macOS this is ~/Library/Application Support/Launcher/config.yaml.
+func DefaultPath() string {
+	if pathUsed != "" {
+		return pathUsed
+	}
+	if explicit := os.Getenv("LAUNCHER_CONFIG"); explicit != "" {
+		return explicit
+	}
+	if runtime.GOOS == "darwin" {
+		if home, err := os.UserHomeDir(); err == nil {
+			return filepath.Join(home, "Library", "Application Support", "Launcher", "config.yaml")
+		}
+	}
+	if configHome := os.Getenv("XDG_CONFIG_HOME"); configHome != "" {
+		return filepath.Join(configHome, "launcher", "config.yaml")
+	}
+	if home, err := os.UserHomeDir(); err == nil {
+		return filepath.Join(home, ".config", "launcher", "config.yaml")
+	}
+	return "config.yaml"
+}
+
+// Save writes the configuration to disk. If a config was previously loaded,
+// it saves to that path; otherwise it uses DefaultPath().
+func Save(cfg Config) error {
+	path := DefaultPath()
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return fmt.Errorf("create config directory: %w", err)
+	}
+	data, err := yaml.Marshal(cfg)
+	if err != nil {
+		return fmt.Errorf("marshal config: %w", err)
+	}
+	if err := os.WriteFile(path, data, 0600); err != nil {
+		return fmt.Errorf("write config: %w", err)
+	}
+	// Update the cached config
+	configMu.Lock()
+	loaded = cfg
+	if pathUsed == "" {
+		pathUsed = path
+	}
+	configMu.Unlock()
+	return nil
+}
+
+// Update replaces the cached config in memory without writing to disk.
+func Update(cfg Config) {
+	configMu.Lock()
+	loaded = cfg
+	configMu.Unlock()
+}
+
+// Get returns the currently loaded config. It must be called after Load().
+func Get() Config {
+	configMu.RLock()
+	defer configMu.RUnlock()
+	return loaded
 }
 
 func findConfigPath() (string, error) {

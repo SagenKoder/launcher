@@ -1,6 +1,6 @@
 APP := launcher
 VERSION ?= 0.1.3
-ARCH ?= amd64
+ARCH ?= $(shell go env GOARCH)
 GOOS ?= $(shell go env GOOS)
 MAINTAINER ?= Launcher Developers <ops@example.com>
 DESCRIPTION ?= Native Go-based launcher with plugin support.
@@ -12,7 +12,7 @@ DEB_STAGING := $(BUILD)/deb/$(APP)
 DEB_CONTROL := $(DEB_STAGING)/DEBIAN
 DEB_OUTPUT := $(DIST)/$(APP)_$(VERSION)_$(ARCH).deb
 
-.PHONY: build build-release clean package install-user
+.PHONY: build build-release clean package install-user install-macos bundle-macos
 
 $(DIST):
 	mkdir -p $(DIST)
@@ -49,3 +49,46 @@ install-user: build-release
 		install -m 0600 config.example.yaml $(HOME)/.config/launcher/config.yaml.example; \
 		echo "Existing config preserved; wrote example to config.yaml.example"; \
 	fi
+
+install-macos: build-release
+	@[ "$(GOOS)" = "darwin" ] || { echo "install-macos target only supports macOS" >&2; exit 1; }
+	install -d "$(HOME)/bin"
+	install -m 0755 $(BINARY) "$(HOME)/bin/$(APP)"
+	install -d "$(HOME)/Library/Application Support/Launcher"
+	@if [ ! -f "$(HOME)/Library/Application Support/Launcher/config.yaml" ]; then \
+		install -m 0600 config.example.yaml "$(HOME)/Library/Application Support/Launcher/config.yaml"; \
+		echo "Installed config to ~/Library/Application Support/Launcher/config.yaml"; \
+	else \
+		install -m 0600 config.example.yaml "$(HOME)/Library/Application Support/Launcher/config.yaml.example"; \
+		echo "Existing config preserved; wrote example to config.yaml.example"; \
+	fi
+	@echo "Installed $(APP) to ~/bin/$(APP)"
+	@echo "Make sure ~/bin is in your PATH"
+
+BUNDLE := $(DIST)/Launcher.app
+BUNDLE_CONTENTS := $(BUNDLE)/Contents
+BUNDLE_MACOS := $(BUNDLE_CONTENTS)/MacOS
+BUNDLE_RESOURCES := $(BUNDLE_CONTENTS)/Resources
+
+bundle-macos: build-release
+	@[ "$(GOOS)" = "darwin" ] || { echo "bundle-macos target only supports macOS" >&2; exit 1; }
+	rm -rf $(BUNDLE)
+	mkdir -p $(BUNDLE_MACOS) $(BUNDLE_RESOURCES)
+	install -m 0755 $(BINARY) $(BUNDLE_MACOS)/$(APP)
+	@echo '<?xml version="1.0" encoding="UTF-8"?>' > $(BUNDLE_CONTENTS)/Info.plist
+	@echo '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">' >> $(BUNDLE_CONTENTS)/Info.plist
+	@echo '<plist version="1.0">' >> $(BUNDLE_CONTENTS)/Info.plist
+	@echo '<dict>' >> $(BUNDLE_CONTENTS)/Info.plist
+	@echo '  <key>CFBundleExecutable</key><string>$(APP)</string>' >> $(BUNDLE_CONTENTS)/Info.plist
+	@echo '  <key>CFBundleIdentifier</key><string>com.sagenkoder.launcher</string>' >> $(BUNDLE_CONTENTS)/Info.plist
+	@echo '  <key>CFBundleName</key><string>Launcher</string>' >> $(BUNDLE_CONTENTS)/Info.plist
+	@echo '  <key>CFBundleDisplayName</key><string>Launcher</string>' >> $(BUNDLE_CONTENTS)/Info.plist
+	@echo '  <key>CFBundleVersion</key><string>$(VERSION)</string>' >> $(BUNDLE_CONTENTS)/Info.plist
+	@echo '  <key>CFBundleShortVersionString</key><string>$(VERSION)</string>' >> $(BUNDLE_CONTENTS)/Info.plist
+	@echo '  <key>CFBundlePackageType</key><string>APPL</string>' >> $(BUNDLE_CONTENTS)/Info.plist
+	@echo '  <key>LSMinimumSystemVersion</key><string>10.15</string>' >> $(BUNDLE_CONTENTS)/Info.plist
+	@echo '  <key>NSHighResolutionCapable</key><true/>' >> $(BUNDLE_CONTENTS)/Info.plist
+	@echo '</dict>' >> $(BUNDLE_CONTENTS)/Info.plist
+	@echo '</plist>' >> $(BUNDLE_CONTENTS)/Info.plist
+	@echo "Built $(BUNDLE)"
+	@echo "To install: cp -r $(BUNDLE) /Applications/"
